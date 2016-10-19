@@ -3,9 +3,12 @@ namespace MinecraftPinger;
 
 use PhpUC\IO\Stream\ByteArrayInputStream;
 use PhpUC\IO\Stream\ByteArrayOutputStream;
+use PhpUC\IO\Stream\DataInput;
 use PhpUC\IO\Stream\DataInputStream;
 use PhpUC\IO\Stream\DataOutput;
 use PhpUC\IO\Stream\DataOutputStream;
+use PhpUC\IO\Stream\InputStream;
+use PhpUC\IO\Stream\IOException;
 use PhpUC\Net\Socket\InetAddress;
 use PhpUC\Net\Socket\Socket;
 use PhpUC\Net\Socket\SocketException;
@@ -55,7 +58,9 @@ class MinecraftPinger
 
     /**
      * @param int $connectTimeout       connection timeout in milliseconds
+     *                                  (default: 5000)
      * @param int $communicationTimeout communication timeout in milliseconds
+     *                                  (default: 5000)
      * @param int $protocolVersion      optional minecraft protocol version
      *
      * @return \stdClass the minecraft decoded json ping response
@@ -64,18 +69,18 @@ class MinecraftPinger
      * response is invalid
      */
     public function ping(
-        $connectTimeout,
-        $communicationTimeout,
+        $connectTimeout = null,
+        $communicationTimeout = null,
         $protocolVersion = 1
     ) {
         $socket = Socket::createFromAddr(
             InetAddress::getByName($this->hostname),
             $this->port);
         try {
-            $socket->connect($connectTimeout);
-            $socket->setGlobalTimeout($communicationTimeout);
+            $socket->connect($connectTimeout ?: 5000);
+            $socket->setGlobalTimeout($communicationTimeout ?: 5000);
+            $socketIn = $socket->getInputStream();
             $socketOut = new DataOutputStream($socket->getOutputStream());
-            $socketIn = new DataInputStream($socket->getInputStream());
 
             $packet = new ByteArrayOutputStream();
             $packetOut = new DataOutputStream($packet);
@@ -95,13 +100,7 @@ class MinecraftPinger
             $this->writePacket($socketOut, $packet);
 
             // Read PingResponse
-            $packetLength = ProtocolHelper::readVarint($socketIn);
-            if ($packetLength > 65536) {
-                throw new MinecraftPingException('Too ping large response');
-            }
-
-            $packetIn = new DataInputStream(new ByteArrayInputStream(
-                $socketIn->read($packetLength)));
+            $packetIn = $this->readPacket($socketIn, 65536);
             $packetId = ProtocolHelper::readVarint($packetIn);
             if ($packetId !== 0) {
                 throw new MinecraftPingException('Invalid ping response packet ID');
@@ -115,7 +114,7 @@ class MinecraftPinger
             }
 
             return $response;
-        } catch (SocketException $e) {
+        } catch (IOException $e) {
             throw new MinecraftPingException('Network error', null, $e);
         } finally {
             $socket->close();
@@ -128,5 +127,28 @@ class MinecraftPinger
         $packet->reset();
         ProtocolHelper::writeVarint($os, strlen($data));
         $os->writeBuf($data);
+    }
+
+    private function readPacket(InputStream $is, $sizeLimit = null)
+    {
+        $packetLength = ProtocolHelper::readVarint(new DataInputStream($is));
+        if ($sizeLimit !== null && $packetLength > $sizeLimit) {
+            throw new MinecraftPingException('Too large packet response');
+        }
+
+        $readBuf = '';
+        $readLen = 0;
+        while ($readLen < $packetLength) {
+            $buf = $is->read($packetLength - $readLen);
+            if ($buf === null) {
+                break;
+            }
+            $bufLen = strlen($buf);
+
+            $readBuf .= $buf;
+            $readLen += $bufLen;
+        }
+
+        return new DataInputStream(new ByteArrayInputStream($readBuf));
     }
 }

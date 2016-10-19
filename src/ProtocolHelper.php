@@ -33,14 +33,16 @@ class ProtocolHelper
     public static function readVarint(DataInput $is)
     {
         $result = 0;
-        $shift = 0;
+        $numRead = 0;
         do {
-            $byte = $is->readUnsignedByte();
-            $result |= ($byte & 0x7f) << $shift * 7;
-            if (++$shift > 5) {
-                throw new \InvalidArgumentException('VarInt is too big');
+            $read = $is->readByte();
+            $value = ($read & 0x7F);
+            $result |= ($value << (7 * $numRead));
+
+            if (++$numRead > 5) {
+                throw new \RuntimeException("VarInt is too big");
             }
-        } while ($byte > 0x7f);
+        } while (($read & 0x80) != 0);
 
         return $result;
     }
