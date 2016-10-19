@@ -59,6 +59,9 @@ class MinecraftPinger
      * @param int $protocolVersion      optional minecraft protocol version
      *
      * @return \stdClass the minecraft decoded json ping response
+     *
+     * @throws MinecraftPingException when a network error occurs or the ping
+     * response is invalid
      */
     public function ping(
         $connectTimeout,
